@@ -1,5 +1,6 @@
 package ai.javaclaw.onboarding;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -15,6 +16,10 @@ public interface AgentOnboardingProvider {
 
     String defaultModel();
 
+    default List<ExtraField> extraFields() {
+        return List.of();
+    }
+
     default Optional<SystemWideToken> systemWideToken() {
         return Optional.empty();
     }
@@ -29,4 +34,6 @@ public interface AgentOnboardingProvider {
     }
 
     record SystemWideToken(String name, String token) {}
+
+    record ExtraField(String name, String label, String placeholder, boolean required, String propertyKey) {}
 }

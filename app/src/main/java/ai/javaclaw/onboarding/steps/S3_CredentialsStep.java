@@ -1,6 +1,7 @@
 package ai.javaclaw.onboarding.steps;
 
 import ai.javaclaw.onboarding.AgentOnboardingProvider;
+import ai.javaclaw.onboarding.AgentOnboardingProvider.ExtraField;
 import ai.javaclaw.onboarding.AgentOnboardingProvider.SystemWideToken;
 import ai.javaclaw.onboarding.AgentOnboardingProviders;
 import ai.javaclaw.onboarding.OnboardingProvider;
@@ -8,6 +9,9 @@ import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -48,6 +52,20 @@ public class S3_CredentialsStep implements OnboardingProvider {
         model.put("apiKey", session.getOrDefault(S2_ProviderStep.SESSION_API_KEY, existingApiKey));
         model.put("model", currentModel != null && !currentModel.isBlank() ? currentModel : (!existingModel.isBlank() ? existingModel : provider.defaultModel()));
         provider.systemWideToken().ifPresent(t -> model.put("systemWideTokenName", t.name()));
+
+        List<Map<String, Object>> extraFields = new ArrayList<>();
+        for (ExtraField f : provider.extraFields()) {
+            Map<String, Object> fieldMap = new LinkedHashMap<>();
+            fieldMap.put("name", f.name());
+            fieldMap.put("label", f.label());
+            fieldMap.put("placeholder", f.placeholder());
+            fieldMap.put("required", f.required());
+            fieldMap.put("propertyKey", f.propertyKey());
+            fieldMap.put("value", session.getOrDefault(S2_ProviderStep.SESSION_EXTRA_PREFIX + f.name(),
+                    env.getProperty(f.propertyKey(), "")));
+            extraFields.add(fieldMap);
+        }
+        model.put("extraFields", extraFields);
     }
 
     @Override
@@ -75,6 +93,14 @@ public class S3_CredentialsStep implements OnboardingProvider {
 
         if (provider.requiresApiKey() && apiKey.isBlank()) {
             return "Enter an API key to continue.";
+        }
+
+        for (ExtraField field : provider.extraFields()) {
+            String value = formParams.getOrDefault(field.name(), "").trim();
+            if (field.required() && value.isBlank()) {
+                return "Enter " + field.label() + " to continue.";
+            }
+            session.put(S2_ProviderStep.SESSION_EXTRA_PREFIX + field.name(), value);
         }
 
         session.put(S2_ProviderStep.SESSION_MODEL, model);

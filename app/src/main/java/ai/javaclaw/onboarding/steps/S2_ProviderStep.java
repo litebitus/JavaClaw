@@ -19,6 +19,7 @@ public class S2_ProviderStep implements OnboardingProvider {
     static final String SESSION_PROVIDER = "onboarding.provider";
     static final String SESSION_MODEL = "onboarding.model";
     static final String SESSION_API_KEY = "onboarding.apiKey";
+    static final String SESSION_EXTRA_PREFIX = "onboarding.extra.";
 
     private final AgentOnboardingProviders agentOnboardingProviders;
     private final Environment env;
@@ -70,6 +71,12 @@ public class S2_ProviderStep implements OnboardingProvider {
         Map<String, Object> props = new LinkedHashMap<>();
         agentOnboardingProvider.saveProperty(props, "chat.options.model", model);
         agentOnboardingProvider.saveProperty(props, "api-key", apiKey);
+        agentOnboardingProvider.extraFields().forEach(field -> {
+            String value = (String) session.getOrDefault(SESSION_EXTRA_PREFIX + field.name(), "");
+            if (!value.isBlank()) {
+                props.put(field.propertyKey(), value);
+            }
+        });
         props.put("spring.ai.model.chat", agentOnboardingProvider.getId().replace(".", "-"));
         configurationManager.updateProperties(props);
     }

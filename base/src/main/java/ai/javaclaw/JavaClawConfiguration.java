@@ -22,6 +22,7 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.model.SpringAIModelProperties;
 import org.springframework.beans.factory.ObjectProvider;
@@ -63,7 +64,12 @@ public class JavaClawConfiguration {
     @Bean
     public ChatClient.Builder chatClientBuilder(ObjectProvider<ChatModel> chatModelProvider) {
         ChatModel chatModel = chatModelProvider.getIfUnique(() -> prompt -> new ChatResponse(List.of(new Generation(new AssistantMessage("No AI model has been configured. If you did configure a model recently, restart JavaClaw manually for the changes to take effect.")))));
-        return ChatClient.builder(chatModel);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        ChatOptions defaultOptions = chatModel.getDefaultOptions();
+        if (defaultOptions != null) {
+            builder.defaultOptions(defaultOptions.mutate());
+        }
+        return builder;
     }
 
     @Bean
