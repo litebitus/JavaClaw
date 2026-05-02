@@ -16,20 +16,20 @@ import org.springframework.stereotype.Component;
 public class JavaClawApplication {
 
     private static final Logger log = LoggerFactory.getLogger(JavaClawApplication.class);
-    private static ConfigurableApplicationContext applicationContext;
 
     public static void main(String[] args) {
-        applicationContext = SpringApplication.run(JavaClawApplication.class, args);
+        SpringApplication.run(JavaClawApplication.class, args);
     }
 
     @Component
     static public class JavaClawApplicationMonitor implements ApplicationRunner {
 
-
         private final Environment environment;
+        private final ConfigurableApplicationContext applicationContext;
 
-        public JavaClawApplicationMonitor(Environment environment) {
+        public JavaClawApplicationMonitor(Environment environment, ConfigurableApplicationContext applicationContext) {
             this.environment = environment;
+            this.applicationContext = applicationContext;
         }
 
         @Override
@@ -45,12 +45,12 @@ public class JavaClawApplication {
         @EventListener
         public void on(ConfigurationChangedEvent configurationChangedEvent) {
             ApplicationArguments args = applicationContext.getBean(ApplicationArguments.class);
-            
+
             Thread thread = new Thread(() -> {
                 try {
                     Thread.sleep(2000);
                     applicationContext.close();
-                    applicationContext = SpringApplication.run(JavaClawApplication.class, args.getSourceArgs());
+                    SpringApplication.run(JavaClawApplication.class, args.getSourceArgs());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
