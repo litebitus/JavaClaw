@@ -253,7 +253,7 @@
         if (e.target.id === 'message-input' && e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
         }
-    });
+    }, true);
     document.body.addEventListener('htmx:wsAfterSend', function () {
         var ta = document.getElementById('message-input');
         if (ta) { ta.value = ''; ta.style.height = ''; }
