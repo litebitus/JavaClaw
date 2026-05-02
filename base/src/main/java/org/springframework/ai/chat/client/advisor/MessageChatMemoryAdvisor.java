@@ -19,7 +19,7 @@ import reactor.core.scheduler.Scheduler;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.SequencedSet;
+import java.util.Set;
 
 /**
  * A copy of Springs MessageChatMemoryAdvisor that does not add duplicate messages from memory if they are contained in the chatClientRequest.prompt().getInstructions()
@@ -60,10 +60,19 @@ public final class MessageChatMemoryAdvisor implements BaseChatMemoryAdvisor {
 
         List<Message> instructions = chatClientRequest.prompt().getInstructions();
 
-        // 1. Remove duplicated messages by means of LinkedHashSet
-        SequencedSet<Message> allMessages = new LinkedHashSet<>(this.chatMemory.get(conversationId));
-        allMessages.addAll(instructions);
-        List<Message> processedMessages = new ArrayList<>(allMessages);
+        // 1. Deduplicate: keep memory messages not already present in instructions,
+        //    then append instructions. This ensures current instructions (including
+        //    the new user message) always appear at the end, preventing Bedrock's
+        //    "conversation must end with a user message" error when the user sends
+        //    the same text as a previous turn.
+        Set<Message> instructionSet = new LinkedHashSet<>(instructions);
+        List<Message> processedMessages = new ArrayList<>();
+        for (Message m : this.chatMemory.get(conversationId)) {
+            if (!instructionSet.contains(m)) {
+                processedMessages.add(m);
+            }
+        }
+        processedMessages.addAll(instructions);
 
         // 2.1. Ensure system message, if present, appears first in the list.
         for (int i = 0; i < processedMessages.size(); i++) {

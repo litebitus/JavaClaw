@@ -4,6 +4,7 @@ import ai.javaclaw.configuration.ConfigurationManager;
 import ai.javaclaw.tasks.TaskManager;
 import ai.javaclaw.tools.AgentEnvironment;
 import ai.javaclaw.tools.AutoDiscoveredTool;
+import ai.javaclaw.tools.SanitizeToolCallArgumentsAdvisor;
 import ai.javaclaw.tools.CheckListTool;
 import ai.javaclaw.tools.McpTool;
 import ai.javaclaw.tools.TaskTool;
@@ -31,6 +32,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
+import org.springframework.core.Ordered;
 import org.springframework.core.io.Resource;
 
 import java.io.IOException;
@@ -112,8 +114,14 @@ public class JavaClawConfiguration {
                         // Smart web fetch tool
                         SmartWebFetchTool.builder(chatClientBuilder.clone().build()).build())
                 .defaultAdvisors(
-                        toolCallAdvisor,
-                        MessageChatMemoryAdvisor.builder(chatMemory).build()
+                        // Must run OUTSIDE the ToolCallAdvisor loop to avoid duplicate
+                        // message history on each tool iteration (Bedrock rejects this).
+                        // Order must be lower than ToolCallAdvisor's default (MIN_VALUE+300).
+                        MessageChatMemoryAdvisor.builder(chatMemory)
+                                .order(Ordered.HIGHEST_PRECEDENCE + 100)
+                                .build(),
+                        new SanitizeToolCallArgumentsAdvisor(),
+                        toolCallAdvisor
                 );
 
         autoDiscoveredTools.forEach(autoDiscoveredTool -> chatClientBuilder.defaultTools(autoDiscoveredTool.tool()));
