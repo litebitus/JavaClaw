@@ -1,7 +1,7 @@
 package ai.javaclaw.tools;
 
 import java.io.File;
-import java.time.Instant;
+import java.time.LocalDateTime;
 
 public class AgentEnvironment {
 
@@ -33,7 +33,7 @@ public class AgentEnvironment {
         sb.append("Platform: ").append(platform).append(System.lineSeparator());
         sb.append("OS Version: ").append(osVersion).append(System.lineSeparator());
         sb.append("Timezone: ").append(timezone).append(System.lineSeparator());
-        sb.append("Current time: ").append(Instant.now()).append(System.lineSeparator());
+        sb.append("Current time: ").append(LocalDateTime.now()).append(System.lineSeparator());
 
         return sb.toString();
     }
