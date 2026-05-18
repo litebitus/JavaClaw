@@ -1,10 +1,12 @@
 package ai.javaclaw.channels.telegram;
 
-import ai.javaclaw.agent.Agent;
-import ai.javaclaw.channels.Channel;
-import ai.javaclaw.channels.ChannelMessageReceivedEvent;
-import ai.javaclaw.channels.ChannelRegistry;
+import java.util.List;
+import static java.util.Optional.ofNullable;
+
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension;
+import org.commonmark.node.Node;
+import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
@@ -17,13 +19,11 @@ import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
-import org.commonmark.node.Node;
-import org.commonmark.parser.Parser;
-import org.commonmark.renderer.html.HtmlRenderer;
 
-import java.util.List;
-
-import static java.util.Optional.ofNullable;
+import ai.javaclaw.agent.Agent;
+import ai.javaclaw.channels.Channel;
+import ai.javaclaw.channels.ChannelMessageReceivedEvent;
+import ai.javaclaw.channels.ChannelRegistry;
 
 public class TelegramChannel implements Channel, SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
 
@@ -130,13 +130,18 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
         Node document = MARKDOWN_PARSER.parse(markdown);
         String html = HTML_RENDERER.render(document);
 
-        // Minimalist replacement logic to handle unsupported structural tags
-        return html.replace("<p>", "").replace("</p>", "\n")
-                .replaceAll("(?s)<h[1-6]>(.*?)</h[1-6]>", "<b>$1</b>\n")
+        // Process structural tags in the correct order:
+        // 1. List items must be handled before <p> stripping, because CommonMark
+        //    emits <li><p>text</p></li> for loose lists. Stripping <p> first would
+        //    leave bare newlines inside <li> content and break the li regex.
+        return html
+                .replace("<ul>\n", "").replace("</ul>\n", "")
+                .replace("<ol>\n", "").replace("</ol>\n", "")
+                .replaceAll("(?s)<li>\\s*<p>(.*?)</p>\\s*</li>", "- $1\n")
                 .replaceAll("(?s)<li>(.*?)</li>", "- $1\n")
-                .replace("<ul>", "").replace("</ul>", "")
-                .replace("<ol>", "").replace("</ol>", "")
-                .replace("<hr />", "\n")
+                .replaceAll("(?s)<h[1-6]>(.*?)</h[1-6]>", "<b>$1</b>\n")
+                .replace("<p>", "").replace("</p>", "\n")
+                .replace("<hr />\n", "\n")
                 .trim();
     }
 

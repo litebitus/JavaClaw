@@ -1,10 +1,16 @@
 package ai.javaclaw.channels.telegram;
 
-import ai.javaclaw.agent.Agent;
-import ai.javaclaw.channels.ChannelRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.Mock;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -14,14 +20,8 @@ import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
+import ai.javaclaw.agent.Agent;
+import ai.javaclaw.channels.ChannelRegistry;
 
 @ExtendWith(MockitoExtension.class)
 class TelegramChannelTest {
@@ -207,6 +207,61 @@ class TelegramChannelTest {
                 ParseMode.HTML.equals(msg.getParseMode()) &&
                         "Here is <strong>bold</strong> text and a <a href=\"https://example.com\">link</a>"
                                 .equals(msg.getText())
+        ));
+    }
+
+    @Test
+    void sendMessageConvertsUnorderedListToPlainBullets() throws TelegramApiException {
+        TelegramChannel channel = channel("allowed_user");
+        when(agent.respondTo(anyString(), anyString()))
+                .thenReturn("- item one\n- item two\n- item three");
+
+        channel.consume(updateFrom("allowed_user", "hello", 42L, null));
+
+        verify(telegramClient).execute(argThat((SendMessage msg) ->
+                ParseMode.HTML.equals(msg.getParseMode()) &&
+                        msg.getText().contains("- item one") &&
+                        msg.getText().contains("- item two") &&
+                        msg.getText().contains("- item three") &&
+                        !msg.getText().contains("<li>") &&
+                        !msg.getText().contains("<ul>")
+        ));
+    }
+
+    @Test
+    void sendMessageConvertsOrderedListToPlainBullets() throws TelegramApiException {
+        TelegramChannel channel = channel("allowed_user");
+        when(agent.respondTo(anyString(), anyString()))
+                .thenReturn("1. first\n2. second\n3. third");
+
+        channel.consume(updateFrom("allowed_user", "hello", 42L, null));
+
+        verify(telegramClient).execute(argThat((SendMessage msg) ->
+                ParseMode.HTML.equals(msg.getParseMode()) &&
+                        msg.getText().contains("- first") &&
+                        msg.getText().contains("- second") &&
+                        msg.getText().contains("- third") &&
+                        !msg.getText().contains("<li>") &&
+                        !msg.getText().contains("<ol>")
+        ));
+    }
+
+    @Test
+    void sendMessageConvertsLooseListWithParagraphsToPlainBullets() throws TelegramApiException {
+        TelegramChannel channel = channel("allowed_user");
+        // Blank lines between items make CommonMark emit <li><p>text</p></li>
+        when(agent.respondTo(anyString(), anyString()))
+                .thenReturn("- item one\n\n- item two\n\n- item three");
+
+        channel.consume(updateFrom("allowed_user", "hello", 42L, null));
+
+        verify(telegramClient).execute(argThat((SendMessage msg) ->
+                ParseMode.HTML.equals(msg.getParseMode()) &&
+                        msg.getText().contains("- item one") &&
+                        msg.getText().contains("- item two") &&
+                        msg.getText().contains("- item three") &&
+                        !msg.getText().contains("<li>") &&
+                        !msg.getText().contains("<p>")
         ));
     }
 
