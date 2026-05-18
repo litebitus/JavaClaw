@@ -1,8 +1,8 @@
 package ai.javaclaw.chat;
 
-import org.springframework.web.util.HtmlUtils;
-
 import java.util.List;
+
+import org.springframework.web.util.HtmlUtils;
 
 /**
  * Chat message bubble HTML fragment helpers.
@@ -17,6 +17,14 @@ public class ChatHtml {
                 <div class="ar-msg__avatar">JC</div>\
                 <div class="ar-msg__bubble">%s</div>\
                 </article>""".formatted(HtmlUtils.htmlEscape(text));
+    }
+
+    public static String agentBubble(String id, String text) {
+        return """
+                <article class="ar-msg ar-msg--agent">\
+                <div class="ar-msg__avatar">JC</div>\
+                <div id="%s" class="ar-msg__bubble">%s</div>\
+                </article>""".formatted(id, HtmlUtils.htmlEscape(text));
     }
 
     public static String userBubble(String text) {

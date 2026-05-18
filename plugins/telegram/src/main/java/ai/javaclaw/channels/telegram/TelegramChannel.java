@@ -2,6 +2,7 @@ package ai.javaclaw.channels.telegram;
 
 import java.util.List;
 import static java.util.Optional.ofNullable;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension;
 import org.commonmark.node.Node;
@@ -15,6 +16,7 @@ import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.ParseMode;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
@@ -24,6 +26,7 @@ import ai.javaclaw.agent.Agent;
 import ai.javaclaw.channels.Channel;
 import ai.javaclaw.channels.ChannelMessageReceivedEvent;
 import ai.javaclaw.channels.ChannelRegistry;
+import reactor.core.publisher.Flux;
 
 public class TelegramChannel implements Channel, SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
 
@@ -46,7 +49,8 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
         this(botToken, allowedUsername, new OkHttpTelegramClient(botToken), agent, channelRegistry);
     }
 
-    TelegramChannel(String botToken, String allowedUsername, TelegramClient telegramClient, Agent agent, ChannelRegistry channelRegistry) {
+    TelegramChannel(String botToken, String allowedUsername, TelegramClient telegramClient, Agent agent,
+            ChannelRegistry channelRegistry) {
         this.botToken = botToken;
         this.allowedUsername = normalizeUsername(allowedUsername);
         this.telegramClient = telegramClient;
@@ -68,7 +72,8 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
 
     @Override
     public void consume(Update update) {
-        if (!(update.hasMessage() && update.getMessage().hasText())) return;
+        if (!(update.hasMessage() && update.getMessage().hasText()))
+            return;
 
         Message requestMessage = update.getMessage();
         String userName = requestMessage.getFrom() == null ? null : requestMessage.getFrom().getUserName();
@@ -81,9 +86,98 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
         String messageText = requestMessage.getText();
         this.chatId = requestMessage.getChatId();
         Integer messageThreadId = requestMessage.getMessageThreadId();
-        channelRegistry.publishMessageReceivedEvent(new TelegramChannelMessageReceivedEvent(getName(), messageText, chatId, messageThreadId));
-        String response = agent.respondTo(getConversationId(chatId, messageThreadId), messageText);
-        sendMessage(chatId, messageThreadId, response);
+        channelRegistry.publishMessageReceivedEvent(
+                new TelegramChannelMessageReceivedEvent(getName(), messageText, chatId, messageThreadId));
+        streamAndSend(chatId, messageThreadId, getConversationId(chatId, messageThreadId), messageText);
+    }
+
+    private void streamAndSend(long chatId, Integer messageThreadId, String conversationId, String messageText) {
+        AtomicReference<Integer> sentMessageId = new AtomicReference<>();
+        StringBuilder accumulated = new StringBuilder();
+        AtomicReference<String> lastSentText = new AtomicReference<>();
+
+        Flux<String> stream = agent.streamResponseTo(conversationId, messageText);
+        stream.subscribe(
+                chunk -> {
+                    accumulated.append(chunk);
+                    String current = accumulated.toString();
+                    Integer existingMessageId = sentMessageId.get();
+                    if (existingMessageId == null) {
+                        // Send the first message and remember its ID for later edits
+                        lastSentText.set(current);
+                        try {
+                            Message sent = sendMessageAndReturn(chatId, messageThreadId, current);
+                            sentMessageId.set(sent.getMessageId());
+                        } catch (Exception e) {
+                            LOGGER.warn("Failed to send initial streaming message", e);
+                        }
+                    } else {
+                        // Edit in place as more tokens arrive
+                        editMessage(chatId, existingMessageId, current);
+                        lastSentText.set(current);
+                    }
+                },
+                error -> {
+                    LOGGER.error("Error while streaming response", error);
+                    sendMessage(chatId, messageThreadId, "Sorry, an error occurred while generating the response.");
+                },
+                () -> {
+                    // Only do a final edit if new content arrived after the last send/edit
+                    Integer existingMessageId = sentMessageId.get();
+                    String finalText = accumulated.toString();
+                    if (finalText.equals(lastSentText.get()))
+                        return;
+                    if (existingMessageId == null) {
+                        sendMessage(chatId, messageThreadId, finalText);
+                    } else {
+                        editMessage(chatId, existingMessageId, finalText);
+                    }
+                });
+    }
+
+    private Message sendMessageAndReturn(long chatId, Integer messageThreadId, String message)
+            throws TelegramApiException {
+        String formattedHtmlMessage = convertMarkdownToTelegramHtml(message);
+        SendMessage htmlMessage = SendMessage.builder()
+                .chatId(chatId)
+                .messageThreadId(messageThreadId)
+                .text(formattedHtmlMessage)
+                .parseMode(ParseMode.HTML)
+                .build();
+        try {
+            return telegramClient.execute(htmlMessage);
+        } catch (TelegramApiException e) {
+            LOGGER.warn("Failed to send HTML parsed message, falling back to raw text.", e);
+            return telegramClient.execute(SendMessage.builder()
+                    .chatId(chatId)
+                    .messageThreadId(messageThreadId)
+                    .text(message)
+                    .build());
+        }
+    }
+
+    private void editMessage(long chatId, int messageId, String message) {
+        String formattedHtmlMessage = convertMarkdownToTelegramHtml(message);
+        EditMessageText editHtml = EditMessageText.builder()
+                .chatId(chatId)
+                .messageId(messageId)
+                .text(formattedHtmlMessage)
+                .parseMode(ParseMode.HTML)
+                .build();
+        try {
+            telegramClient.execute(editHtml);
+        } catch (TelegramApiException e) {
+            LOGGER.warn("Failed to edit message with HTML, falling back to raw text.", e);
+            try {
+                telegramClient.execute(EditMessageText.builder()
+                        .chatId(chatId)
+                        .messageId(messageId)
+                        .text(message)
+                        .build());
+            } catch (TelegramApiException fallbackEx) {
+                LOGGER.warn("Failed to edit message with raw text as well.", fallbackEx);
+            }
+        }
     }
 
     @Override
@@ -125,15 +219,16 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
     }
 
     private String convertMarkdownToTelegramHtml(String markdown) {
-        if (markdown == null || markdown.isBlank()) return "";
+        if (markdown == null || markdown.isBlank())
+            return "";
 
         Node document = MARKDOWN_PARSER.parse(markdown);
         String html = HTML_RENDERER.render(document);
 
         // Process structural tags in the correct order:
         // 1. List items must be handled before <p> stripping, because CommonMark
-        //    emits <li><p>text</p></li> for loose lists. Stripping <p> first would
-        //    leave bare newlines inside <li> content and break the li regex.
+        // emits <li><p>text</p></li> for loose lists. Stripping <p> first would
+        // leave bare newlines inside <li> content and break the li regex.
         return html
                 .replace("<ul>\n", "").replace("</ul>\n", "")
                 .replace("<ol>\n", "").replace("</ol>\n", "")
@@ -172,7 +267,8 @@ public class TelegramChannel implements Channel, SpringLongPollingBot, LongPolli
         private final long chatId;
         private final Integer messageThreadId;
 
-        public TelegramChannelMessageReceivedEvent(String channel, String message, long chatId, Integer messageThreadId) {
+        public TelegramChannelMessageReceivedEvent(String channel, String message, long chatId,
+                Integer messageThreadId) {
             super(channel, message);
             this.chatId = chatId;
             this.messageThreadId = messageThreadId;

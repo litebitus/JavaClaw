@@ -4,6 +4,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Component;
 
+import reactor.core.publisher.Flux;
+
 @Component
 public class DefaultAgent implements Agent {
 
@@ -19,6 +21,15 @@ public class DefaultAgent implements Agent {
                 .prompt(question)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
                 .call()
+                .content();
+    }
+
+    @Override
+    public Flux<String> streamResponseTo(String conversationId, String question) {
+        return chatClient
+                .prompt(question)
+                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
+                .stream()
                 .content();
     }
 

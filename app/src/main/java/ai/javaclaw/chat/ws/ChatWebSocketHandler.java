@@ -1,8 +1,9 @@
 package ai.javaclaw.chat.ws;
 
-import ai.javaclaw.chat.ChatChannel;
-import ai.javaclaw.chat.ChatHtml;
-import ai.javaclaw.chat.Htmx;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -11,10 +12,11 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-import tools.jackson.databind.ObjectMapper;
 
-import java.util.List;
-import java.util.Map;
+import ai.javaclaw.chat.ChatChannel;
+import ai.javaclaw.chat.ChatHtml;
+import ai.javaclaw.chat.Htmx;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @ConditionalOnProperty(name = "javaclaw.chat.transport", havingValue = "spring-websocket", matchIfMissing = true)
@@ -85,26 +87,49 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         userMessage = userMessage.trim();
         if (conversationId == null || conversationId.isBlank()) conversationId = "web";
 
-        // Echo user message + show typing indicator
-        chatChannel.sendHtml(
-                Htmx.oobAppend("chat-messages", ChatHtml.userBubble(userMessage)),
-                Htmx.oobReplace("typing-indicator", ChatHtml.typingDots()));
+        final String finalConversationId = conversationId;
+        final String finalUserMessage = userMessage;
+        final String bubbleId = "msg-" + UUID.randomUUID();
 
-        try {
-            // Call agent (blocking — background tasks may push messages via ChatChannel during this)
-            String response = chatChannel.chat(conversationId, userMessage);
-            chatChannel.sendHtml(
-                    Htmx.oobAppend("chat-messages", ChatHtml.agentBubble(response)),
-                    Htmx.oobReplace("typing-indicator", ""));
-        } catch (RuntimeException ex) {
-            log.warn("Chat request failed for conversation {}", conversationId, ex);
-            chatChannel.sendHtml(
-                    Htmx.oobAppend("chat-messages", ChatHtml.agentBubble(genericUserFacingError(ex))),
-                    Htmx.oobReplace("typing-indicator", ""));
-        }
+        // Echo user message + show typing indicator + send empty agent bubble to stream into
+        chatChannel.sendHtml(
+                Htmx.oobAppend("chat-messages", ChatHtml.userBubble(finalUserMessage)),
+                Htmx.oobReplace("typing-indicator", ChatHtml.typingDots()),
+                Htmx.oobAppend("chat-messages", ChatHtml.agentBubble(bubbleId, "")));
+
+        final StringBuilder accumulated = new StringBuilder();
+        chatChannel.streamChat(finalConversationId, finalUserMessage)
+                .subscribe(
+                        chunk -> {
+                            accumulated.append(chunk);
+                            try {
+                                chatChannel.sendHtml(
+                                        Htmx.oobInnerHtml(bubbleId, accumulated.toString()));
+                            } catch (Exception e) {
+                                log.warn("Failed to push streaming chunk over WebSocket", e);
+                            }
+                        },
+                        error -> {
+                            log.warn("Chat stream failed for conversation {}", finalConversationId, error);
+                            try {
+                                chatChannel.sendHtml(
+                                        Htmx.oobAppend("chat-messages", ChatHtml.agentBubble(genericUserFacingError(error))),
+                                        Htmx.oobReplace("typing-indicator", ""));
+                            } catch (Exception e) {
+                                log.warn("Failed to push error message over WebSocket", e);
+                            }
+                        },
+                        () -> {
+                            try {
+                                chatChannel.sendHtml(Htmx.oobReplace("typing-indicator", ""));
+                            } catch (Exception e) {
+                                log.warn("Failed to clear typing indicator over WebSocket", e);
+                            }
+                        }
+                );
     }
 
-    private static String genericUserFacingError(RuntimeException ex) {
+    private static String genericUserFacingError(Throwable ex) {
         return "An error occurred while contacting the AI provider.\nDetails: " + summarizeError(ex);
     }
 

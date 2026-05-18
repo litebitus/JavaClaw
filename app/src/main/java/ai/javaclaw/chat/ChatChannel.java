@@ -1,9 +1,11 @@
 package ai.javaclaw.chat;
 
-import ai.javaclaw.agent.Agent;
-import ai.javaclaw.channels.Channel;
-import ai.javaclaw.channels.ChannelMessageReceivedEvent;
-import ai.javaclaw.channels.ChannelRegistry;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
@@ -17,11 +19,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicReference;
+import ai.javaclaw.agent.Agent;
+import ai.javaclaw.channels.Channel;
+import ai.javaclaw.channels.ChannelMessageReceivedEvent;
+import ai.javaclaw.channels.ChannelRegistry;
+import reactor.core.publisher.Flux;
 
 /**
  * GUI channel for the web chat interface.
@@ -128,6 +130,14 @@ public class ChatChannel implements Channel {
     public String chat(String conversationId, String message) {
         channelRegistry.publishMessageReceivedEvent(new ChannelMessageReceivedEvent(getName(), message));
         return agent.respondTo(conversationId, message);
+    }
+
+    /**
+     * Streams a chat response token by token for the given conversationId.
+     */
+    public Flux<String> streamChat(String conversationId, String message) {
+        channelRegistry.publishMessageReceivedEvent(new ChannelMessageReceivedEvent(getName(), message));
+        return agent.streamResponseTo(conversationId, message);
     }
 
     private static String buildBackgroundMessageHtml(String text) {

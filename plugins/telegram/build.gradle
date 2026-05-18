@@ -5,6 +5,7 @@ plugins {
 dependencies {
     implementation project(':base')
     implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'io.projectreactor:reactor-core'
     implementation(libs.telegrambots.client)
     implementation(libs.telegrambots.springboot.longpolling.starter)
     implementation(libs.commonmark.java)

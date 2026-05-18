@@ -8,11 +8,12 @@ import net.dv8tion.jda.api.entities.Mentions;
 import net.dv8tion.jda.api.entities.SelfUser;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.ChannelType;
-import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
+import net.dv8tion.jda.api.requests.restaction.MessageEditAction;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,7 +52,7 @@ class DiscordChannelTest {
 
         channel.onMessageReceived(event(false, false, true, "999", "C1", "<@111> hello", channelMock));
 
-        verify(agent, never()).respondTo(anyString(), anyString());
+        verify(agent, never()).streamResponseTo(anyString(), anyString());
         verify(channelMock).sendMessage("I'm sorry, I don't accept instructions from you.");
     }
 
@@ -59,11 +60,11 @@ class DiscordChannelTest {
     void processesDirectMessages() {
         DiscordChannel channel = channel("123");
         MessageChannelUnion channelMock = messageChannel("D1");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.onMessageReceived(event(false, true, false, "123", "D1", "hello", channelMock));
 
-        verify(agent).respondTo(eq("discord-D1"), eq("hello"));
+        verify(agent).streamResponseTo(eq("discord-D1"), eq("hello"));
         verify(channelMock).sendMessage("hi");
     }
 
@@ -71,18 +72,18 @@ class DiscordChannelTest {
     void stripsMentionInGuildMessages() {
         DiscordChannel channel = channel("123");
         MessageChannelUnion channelMock = messageChannel("C1");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.onMessageReceived(event(false, false, true, "123", "C1", "<@111> hello there", channelMock));
 
-        verify(agent).respondTo(eq("discord-C1"), eq("hello there"));
+        verify(agent).streamResponseTo(eq("discord-C1"), eq("hello there"));
     }
 
     @Test
     void sendMessageUsesLastKnownChannel() {
         DiscordChannel channel = channel("123");
         MessageChannelUnion channelMock = messageChannel("D1");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("ok");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("ok"));
         channel.onMessageReceived(event(false, true, false, "123", "D1", "hello", channelMock));
 
         channel.sendMessage("background update");
@@ -146,9 +147,13 @@ class DiscordChannelTest {
 
     private MessageChannelUnion messageChannel(String channelId) {
         MessageChannelUnion channel = mock(MessageChannelUnion.class);
-        MessageCreateAction action = mock(MessageCreateAction.class);
+        MessageCreateAction createAction = mock(MessageCreateAction.class);
+        Message sentMessage = mock(Message.class);
+        MessageEditAction editAction = mock(MessageEditAction.class);
         when(channel.getId()).thenReturn(channelId);
-        when(channel.sendMessage(anyString())).thenReturn(action);
+        when(channel.sendMessage(anyString())).thenReturn(createAction);
+        when(createAction.complete()).thenReturn(sentMessage);
+        when(sentMessage.editMessage(anyString())).thenReturn(editAction);
         return channel;
     }
 }

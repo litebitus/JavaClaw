@@ -1,11 +1,19 @@
 package ai.javaclaw.chat;
 
-import ai.javaclaw.agent.Agent;
-import ai.javaclaw.channels.ChannelRegistry;
+import java.io.IOException;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.Mock;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -13,22 +21,17 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.IOException;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import ai.javaclaw.agent.Agent;
+import ai.javaclaw.channels.ChannelRegistry;
+import reactor.core.publisher.Flux;
 
 @ExtendWith(MockitoExtension.class)
 class ChatChannelTest {
 
-    @Mock Agent agent;
-    @Mock ChatMemoryRepository chatMemoryRepository;
+    @Mock
+    Agent agent;
+    @Mock
+    ChatMemoryRepository chatMemoryRepository;
 
     ChatChannel chatChannel;
 
@@ -95,8 +98,7 @@ class ChatChannelTest {
     void loadHistoryRendersUserAndAgentBubbles() {
         when(chatMemoryRepository.findByConversationId("web")).thenReturn(List.of(
                 new UserMessage("Hello"),
-                new AssistantMessage("Hi there")
-        ));
+                new AssistantMessage("Hi there")));
 
         List<String> bubbles = chatChannel.loadHistoryAsHtml("web");
 
@@ -108,8 +110,7 @@ class ChatChannelTest {
     @Test
     void loadHistoryEscapesHtmlInMessages() {
         when(chatMemoryRepository.findByConversationId("web")).thenReturn(List.of(
-                new UserMessage("<script>alert('xss')</script>")
-        ));
+                new UserMessage("<script>alert('xss')</script>")));
 
         List<String> bubbles = chatChannel.loadHistoryAsHtml("web");
 
@@ -146,6 +147,29 @@ class ChatChannelTest {
         chatChannel.chat("telegram-42", "hello");
 
         verify(agent).respondTo(eq("telegram-42"), eq("hello"));
+    }
+
+    // -----------------------------------------------------------------------
+    // streamChat
+    // -----------------------------------------------------------------------
+
+    @Test
+    void streamChatDelegatesToAgentStreamResponseTo() {
+        when(agent.streamResponseTo("web", "hello")).thenReturn(Flux.just("hi"));
+
+        Flux<String> flux = chatChannel.streamChat("web", "hello");
+
+        assertThat(flux.collectList().block()).containsExactly("hi");
+        verify(agent).streamResponseTo(eq("web"), eq("hello"));
+    }
+
+    @Test
+    void streamChatUsesSuppliedConversationId() {
+        when(agent.streamResponseTo(eq("telegram-42"), any())).thenReturn(Flux.just("reply"));
+
+        chatChannel.streamChat("telegram-42", "hello").blockLast();
+
+        verify(agent).streamResponseTo(eq("telegram-42"), eq("hello"));
     }
 
     // -----------------------------------------------------------------------

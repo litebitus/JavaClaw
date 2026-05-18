@@ -1,5 +1,13 @@
 package ai.javaclaw.channels.discord;
 
+import static java.util.Optional.ofNullable;
+import java.util.concurrent.atomic.AtomicReference;
+import static java.util.regex.Pattern.quote;
+
+import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import ai.javaclaw.agent.Agent;
 import ai.javaclaw.channels.Channel;
 import ai.javaclaw.channels.ChannelMessageReceivedEvent;
@@ -11,12 +19,7 @@ import net.dv8tion.jda.api.entities.channel.ChannelType;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
-import org.jetbrains.annotations.NotNull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static java.util.Optional.ofNullable;
-import static java.util.regex.Pattern.quote;
+import reactor.core.publisher.Flux;
 
 public class DiscordChannel extends ListenerAdapter implements Channel {
 
@@ -57,8 +60,46 @@ public class DiscordChannel extends ListenerAdapter implements Channel {
 
         lastChannel = channel;
         channelRegistry.publishMessageReceivedEvent(new ChannelMessageReceivedEvent(getName(), content));
-        String response = agent.respondTo(getConversationId(channel.getId()), content);
-        reply(channel, response);
+        streamAndSend(channel, getConversationId(channel.getId()), content);
+    }
+
+    private void streamAndSend(MessageChannel channel, String conversationId, String content) {
+        AtomicReference<Message> sentMessage = new AtomicReference<>();
+        StringBuilder accumulated = new StringBuilder();
+        AtomicReference<String> lastSentText = new AtomicReference<>();
+
+        Flux<String> stream = agent.streamResponseTo(conversationId, content);
+        stream.subscribe(
+                chunk -> {
+                    accumulated.append(chunk);
+                    String current = accumulated.toString();
+                    Message existing = sentMessage.get();
+                    if (existing == null) {
+                        // Send the first message synchronously so we have a reference to edit later
+                        Message sent = channel.sendMessage(current).complete();
+                        sentMessage.set(sent);
+                        lastSentText.set(current);
+                    } else {
+                        existing.editMessage(current).queue();
+                        lastSentText.set(current);
+                    }
+                },
+                error -> {
+                    log.error("Error while streaming response", error);
+                    reply(channel, "Sorry, an error occurred while generating the response.");
+                },
+                () -> {
+                    // Only do a final edit if new content arrived after the last send/edit
+                    Message existing = sentMessage.get();
+                    String finalText = accumulated.toString();
+                    if (finalText.equals(lastSentText.get()))
+                        return;
+                    if (existing == null) {
+                        reply(channel, finalText);
+                    } else {
+                        existing.editMessage(finalText).queue();
+                    }
+                });
     }
 
     @Override

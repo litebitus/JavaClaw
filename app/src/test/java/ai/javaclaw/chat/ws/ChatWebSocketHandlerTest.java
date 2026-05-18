@@ -1,22 +1,23 @@
 package ai.javaclaw.chat.ws;
 
-import ai.javaclaw.chat.ChatChannel;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.web.socket.TextMessage;
-import org.springframework.web.socket.WebSocketSession;
-import tools.jackson.databind.ObjectMapper;
-
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+
+import ai.javaclaw.chat.ChatChannel;
+import reactor.core.publisher.Flux;
+import tools.jackson.databind.ObjectMapper;
 
 class ChatWebSocketHandlerTest {
 
@@ -26,26 +27,26 @@ class ChatWebSocketHandlerTest {
         WebSocketSession session = mock(WebSocketSession.class);
         ChatWebSocketHandler handler = new ChatWebSocketHandler(chatChannel, new ObjectMapper());
 
-        when(chatChannel.chat("web", "hello")).thenThrow(new RuntimeException("""
-                HTTP 401 - {
-                    "error": {
-                        "message": "Incorrect API key provided: Test.",
-                        "code": "invalid_api_key"
-                    }
-                }
-                """));
+        when(chatChannel.streamChat("web", "hello")).thenReturn(
+                Flux.error(new RuntimeException("""
+                        HTTP 401 - {
+                            "error": {
+                                "message": "Incorrect API key provided: Test.",
+                                "code": "invalid_api_key"
+                            }
+                        }
+                        """)));
 
         handler.handleTextMessage(session, new TextMessage(new ObjectMapper().writeValueAsString(Map.of(
                 "type", "userMessage",
                 "conversationId", "web",
-                "message", "hello"
-        ))));
+                "message", "hello"))));
 
         ArgumentCaptor<String[]> htmlCaptor = ArgumentCaptor.forClass(String[].class);
         var inOrder = inOrder(chatChannel);
-        inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture());
-        inOrder.verify(chatChannel).chat("web", "hello");
-        inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture());
+        inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture()); // user bubble + typing + empty agent bubble
+        inOrder.verify(chatChannel).streamChat("web", "hello");
+        inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture()); // error bubble + clear typing
         verifyNoMoreInteractions(chatChannel);
 
         assertThat(String.join("", htmlCaptor.getAllValues().get(0)))
@@ -66,23 +67,50 @@ class ChatWebSocketHandlerTest {
         WebSocketSession session = mock(WebSocketSession.class);
         ChatWebSocketHandler handler = new ChatWebSocketHandler(chatChannel, new ObjectMapper());
 
-        when(chatChannel.chat(anyString(), anyString())).thenThrow(new RuntimeException("boom"));
+        when(chatChannel.streamChat(anyString(), anyString())).thenReturn(Flux.error(new RuntimeException("boom")));
 
         handler.handleTextMessage(session, new TextMessage(new ObjectMapper().writeValueAsString(Map.of(
                 "type", "userMessage",
                 "conversationId", "web",
-                "message", "hello"
-        ))));
+                "message", "hello"))));
 
         ArgumentCaptor<String[]> htmlCaptor = ArgumentCaptor.forClass(String[].class);
         var inOrder = inOrder(chatChannel);
         inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture());
-        inOrder.verify(chatChannel).chat("web", "hello");
+        inOrder.verify(chatChannel).streamChat("web", "hello");
         inOrder.verify(chatChannel).sendHtml(htmlCaptor.capture());
 
         assertThat(String.join("", htmlCaptor.getAllValues().get(1)))
                 .contains("An error occurred while contacting the AI provider")
                 .contains("Details: boom");
+    }
+
+    @Test
+    void handleUserMessageStreamsTokensIntoAgentBubble() throws Exception {
+        ChatChannel chatChannel = mock(ChatChannel.class);
+        WebSocketSession session = mock(WebSocketSession.class);
+        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatChannel, new ObjectMapper());
+
+        when(chatChannel.streamChat("web", "hello")).thenReturn(Flux.just("Hello", " world", "!"));
+
+        handler.handleTextMessage(session, new TextMessage(new ObjectMapper().writeValueAsString(Map.of(
+                "type", "userMessage",
+                "conversationId", "web",
+                "message", "hello"))));
+
+        ArgumentCaptor<String[]> htmlCaptor = ArgumentCaptor.forClass(String[].class);
+        verify(chatChannel, org.mockito.Mockito.atLeast(2)).sendHtml(htmlCaptor.capture());
+
+        // First call: user bubble + typing indicator + empty agent bubble
+        String firstSend = String.join("", htmlCaptor.getAllValues().get(0));
+        assertThat(firstSend).contains("hello").contains("ar-typing");
+
+        // Intermediate/final calls contain accumulated token content
+        String allSent = htmlCaptor.getAllValues().stream()
+                .skip(1)
+                .map(a -> String.join("", a))
+                .reduce("", String::concat);
+        assertThat(allSent).contains("Hello world!");
     }
 
     @Test
@@ -95,8 +123,7 @@ class ChatWebSocketHandlerTest {
 
         handler.handleTextMessage(session, new TextMessage(new ObjectMapper().writeValueAsString(Map.of(
                 "type", "channelChanged",
-                "conversationId", "web"
-        ))));
+                "conversationId", "web"))));
 
         ArgumentCaptor<String[]> htmlCaptor = ArgumentCaptor.forClass(String[].class);
         verify(chatChannel).sendHtml(htmlCaptor.capture());

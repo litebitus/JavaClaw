@@ -19,6 +19,7 @@ import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.api.objects.message.Message;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
+import reactor.core.publisher.Flux;
 
 import ai.javaclaw.agent.Agent;
 import ai.javaclaw.channels.ChannelRegistry;
@@ -82,7 +83,7 @@ class TelegramChannelTest {
 
         channel.consume(updateFromUnknownUser("other_user"));
 
-        verify(agent, never()).respondTo(anyString(), anyString());
+        verify(agent, never()).streamResponseTo(anyString(), anyString());
         verifyNoInteractions(telegramClient);
     }
 
@@ -93,31 +94,31 @@ class TelegramChannelTest {
     @Test
     void usernameMatchingIsCaseInsensitive() {
         TelegramChannel channel = channel("Allowed_User");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
-        verify(agent).respondTo(anyString(), anyString());
+        verify(agent).streamResponseTo(anyString(), anyString());
     }
 
     @Test
     void stripsLeadingAtFromConfiguredUsername() {
         TelegramChannel channel = channel("@Allowed_User");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
-        verify(agent).respondTo(anyString(), anyString());
+        verify(agent).streamResponseTo(anyString(), anyString());
     }
 
     @Test
     void stripsLeadingAtFromIncomingUsername() {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.consume(updateFrom("@allowed_user", "hello", 42L, null));
 
-        verify(agent).respondTo(anyString(), anyString());
+        verify(agent).streamResponseTo(anyString(), anyString());
     }
 
     // -----------------------------------------------------------------------
@@ -127,27 +128,30 @@ class TelegramChannelTest {
     @Test
     void usesChannelChatIdAsConversationId() {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
-        verify(agent).respondTo(eq("telegram-42"), eq("hello"));
+        verify(agent).streamResponseTo(eq("telegram-42"), eq("hello"));
     }
 
     @Test
     void includesMessageThreadIdInConversationId() {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, 567));
 
-        verify(agent).respondTo(eq("telegram-42-567"), eq("hello"));
+        verify(agent).streamResponseTo(eq("telegram-42-567"), eq("hello"));
     }
 
     @Test
     void sendsAgentResponseToCorrectChatId() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> "42".equals(msg.getChatId())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
@@ -158,7 +162,10 @@ class TelegramChannelTest {
     @Test
     void passesMessageThreadIdToSendMessage() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> Integer.valueOf(567).equals(msg.getMessageThreadId())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, 567));
 
@@ -169,7 +176,10 @@ class TelegramChannelTest {
     @Test
     void doesNotSetMessageThreadIdWhenAbsent() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString())).thenReturn("hi");
+        when(agent.streamResponseTo(anyString(), anyString())).thenReturn(Flux.just("hi"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> msg.getMessageThreadId() == null))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
@@ -198,8 +208,11 @@ class TelegramChannelTest {
     @Test
     void sendMessageConvertsMarkdownToTelegramHtml() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString()))
-                .thenReturn("Here is **bold** text and a [link](https://example.com)");
+        when(agent.streamResponseTo(anyString(), anyString()))
+                .thenReturn(Flux.just("Here is **bold** text and a [link](https://example.com)"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> ParseMode.HTML.equals(msg.getParseMode())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, 567));
 
@@ -213,8 +226,11 @@ class TelegramChannelTest {
     @Test
     void sendMessageConvertsUnorderedListToPlainBullets() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString()))
-                .thenReturn("- item one\n- item two\n- item three");
+        when(agent.streamResponseTo(anyString(), anyString()))
+                .thenReturn(Flux.just("- item one\n- item two\n- item three"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> ParseMode.HTML.equals(msg.getParseMode())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
@@ -231,8 +247,11 @@ class TelegramChannelTest {
     @Test
     void sendMessageConvertsOrderedListToPlainBullets() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString()))
-                .thenReturn("1. first\n2. second\n3. third");
+        when(agent.streamResponseTo(anyString(), anyString()))
+                .thenReturn(Flux.just("1. first\n2. second\n3. third"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> ParseMode.HTML.equals(msg.getParseMode())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
@@ -250,8 +269,11 @@ class TelegramChannelTest {
     void sendMessageConvertsLooseListWithParagraphsToPlainBullets() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
         // Blank lines between items make CommonMark emit <li><p>text</p></li>
-        when(agent.respondTo(anyString(), anyString()))
-                .thenReturn("- item one\n\n- item two\n\n- item three");
+        when(agent.streamResponseTo(anyString(), anyString()))
+                .thenReturn(Flux.just("- item one\n\n- item two\n\n- item three"));
+        Message sentMessage = mock(Message.class);
+        when(sentMessage.getMessageId()).thenReturn(1);
+        when(telegramClient.execute(argThat((SendMessage msg) -> ParseMode.HTML.equals(msg.getParseMode())))).thenReturn(sentMessage);
 
         channel.consume(updateFrom("allowed_user", "hello", 42L, null));
 
@@ -269,8 +291,8 @@ class TelegramChannelTest {
     @Test
     void sendMessageFallbacksToSendingRawTextWhenFailingToSendHtml() throws TelegramApiException {
         TelegramChannel channel = channel("allowed_user");
-        when(agent.respondTo(anyString(), anyString()))
-                .thenReturn("Here is **bold** text and an image: ![An example image](/assets/images/clawrunr.png)");
+        when(agent.streamResponseTo(anyString(), anyString()))
+                .thenReturn(Flux.just("Here is **bold** text and an image: ![An example image](/assets/images/clawrunr.png)"));
 
         when(telegramClient.execute(argThat((SendMessage msg) ->
                 ParseMode.HTML.equals(msg.getParseMode())
